@@ -352,224 +352,140 @@ LS[0x0F] = function(self)
 end
 
 -- =============================
--- Vorx64-aware Arithmetic Module (AM)
+-- Arithmetic Module (AM) with Vorx64
 -- =============================
 local AM = {}
 
--- ===== Basic Arithmetic =====
-
--- ADD rd, rs, rt (signed, with overflow ignored for now)
-AM[0x20] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:add(self.registers[rt])
+-- ADD rd, rs, rt (signed, overflow ignored for now)
+AM[0x20] = function(self, rs, rt, rd)
+    self.registers[rd] = mask32(self.registers[rs] + self.registers[rt])
 end
 
 -- ADDU rd, rs, rt (unsigned)
-AM[0x21] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:add(self.registers[rt])
+AM[0x21] = function(self, rs, rt, rd)
+    self.registers[rd] = mask32(self.registers[rs] + self.registers[rt])
 end
 
 -- SUB rd, rs, rt
-AM[0x22] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:sub(self.registers[rt])
+AM[0x22] = function(self, rs, rt, rd)
+    self.registers[rd] = mask32(self.registers[rs] - self.registers[rt])
 end
 
 -- SUBU rd, rs, rt
-AM[0x23] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:sub(self.registers[rt])
+AM[0x23] = function(self, rs, rt, rd)
+    self.registers[rd] = mask32(self.registers[rs] - self.registers[rt])
 end
 
--- ===== Immediate Arithmetic =====
-
--- ADDI rt, rs, imm
-AM[0x08] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:add(Vorx64.new(0, imm))
+-- ADDI / ADDIU
+AM[0x08] = function(self, rs, rt, _, _, imm)
+    self.registers[rt] = mask32(self.registers[rs] + imm)
+end
+AM[0x09] = function(self, rs, rt, _, _, imm)
+    self.registers[rt] = mask32(self.registers[rs] + imm)
 end
 
--- ADDIU rt, rs, imm
-AM[0x09] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:add(Vorx64.new(0, imm))
+-- Logical ops
+AM[0x24] = function(self, rs, rt, rd) self.registers[rd] = self.registers[rs] & self.registers[rt] end
+AM[0x25] = function(self, rs, rt, rd) self.registers[rd] = self.registers[rs] | self.registers[rt] end
+AM[0x26] = function(self, rs, rt, rd) self.registers[rd] = self.registers[rs] ~ self.registers[rt] end
+AM[0x27] = function(self, rs, rt, rd) self.registers[rd] = ~(self.registers[rs] | self.registers[rt]) end
+
+-- Shifts
+AM[0x00] = function(self, _, rt, rd, sa) self.registers[rd] = mask32(self.registers[rt] << sa) end
+AM[0x02] = function(self, _, rt, rd, sa) self.registers[rd] = mask32(self.registers[rt] >> sa) end
+AM[0x03] = function(self, _, rt, rd, sa) 
+    -- Arithmetic right shift
+    local val = self.registers[rt]
+    if val & 0x80000000 ~= 0 then
+        self.registers[rd] = (val >> sa) | (0xFFFFFFFF << (32 - sa))
+    else
+        self.registers[rd] = val >> sa
+    end
+end
+AM[0x04] = function(self, rs, rt, rd) 
+    local sa = self.registers[rs] & 0x1F
+    self.registers[rd] = mask32(self.registers[rt] << sa)
+end
+AM[0x06] = function(self, rs, rt, rd)
+    local sa = self.registers[rs] & 0x1F
+    self.registers[rd] = mask32(self.registers[rt] >> sa)
+end
+AM[0x07] = function(self, rs, rt, rd)
+    local sa = self.registers[rs] & 0x1F
+    local val = self.registers[rt]
+    if val & 0x80000000 ~= 0 then
+        self.registers[rd] = (val >> sa) | (0xFFFFFFFF << (32 - sa))
+    else
+        self.registers[rd] = val >> sa
+    end
 end
 
--- SLTI rt, rs, imm
-AM[0x0A] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:cmp(Vorx64.new(0, imm)) < 0 and 1 or 0
-end
-
--- SLTIU rt, rs, imm
-AM[0x0B] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:cmp(Vorx64.new(0, imm)) < 0 and 1 or 0
-end
-
--- ANDI rt, rs, imm
-AM[0x0C] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:band(Vorx64.new(0, imm))
-end
-
--- ORI rt, rs, imm
-AM[0x0D] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:bor(Vorx64.new(0, imm))
-end
-
--- XORI rt, rs, imm
-AM[0x0E] = function(self, rt, rs, _, _, imm)
-    self.registers[rt] = self.registers[rs]:bxor(Vorx64.new(0, imm))
-end
-
--- LUI rt, imm
-AM[0x0F] = function(self, rt, _, _, _, imm)
-    self.registers[rt] = Vorx64.new(0, imm << 16)
-end
-
--- ===== Logic and Comparison =====
-
--- AND rd, rs, rt
-AM[0x24] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:band(self.registers[rt])
-end
-
--- OR rd, rs, rt
-AM[0x25] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:bor(self.registers[rt])
-end
-
--- XOR rd, rs, rt
-AM[0x26] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:bxor(self.registers[rt])
-end
-
--- NOR rd, rs, rt
-AM[0x27] = function(self, rd, rs, rt)
-    local ones = Vorx64.new(0xFFFFFFFF, 0xFFFFFFFF)
-    self.registers[rd] = self.registers[rs]:bor(self.registers[rt]):bxor(ones)
-end
-
--- SLT rd, rs, rt
-AM[0x2A] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:cmp(self.registers[rt]) < 0 and 1 or 0
-end
-
--- SLTU rd, rs, rt
-AM[0x2B] = function(self, rd, rs, rt)
-    self.registers[rd] = self.registers[rs]:cmp(self.registers[rt]) < 0 and 1 or 0
-end
-
--- ===== Shift Instructions =====
-
--- SLL rd, rt, sa
-AM[0x00] = function(self, rd, _, rt, sa)
-    self.registers[rd] = self.registers[rt]:lshift(sa)
-end
-
--- SRL rd, rt, sa
-AM[0x02] = function(self, rd, _, rt, sa)
-    self.registers[rd] = self.registers[rt]:rshift(sa)
-end
-
--- SRA rd, rt, sa
-AM[0x03] = function(self, rd, _, rt, sa)
-    self.registers[rd] = self.registers[rt]:sar(sa)
-end
-
--- SLLV rd, rt, rs
-AM[0x04] = function(self, rd, rs, rt)
-    local sa = self.registers[rs]:tonumber() & 0x1F
-    self.registers[rd] = self.registers[rt]:lshift(sa)
-end
-
--- SRLV rd, rt, rs
-AM[0x06] = function(self, rd, rs, rt)
-    local sa = self.registers[rs]:tonumber() & 0x1F
-    self.registers[rd] = self.registers[rt]:rshift(sa)
-end
-
--- SRAV rd, rt, rs
-AM[0x07] = function(self, rd, rs, rt)
-    local sa = self.registers[rs]:tonumber() & 0x1F
-    self.registers[rd] = self.registers[rt]:sar(sa)
-end
-
--- ===== Multiply / Divide =====
-
--- MULT rs, rt
+-- MULT / MULTU (32-bit result in HI/LO)
 AM[0x18] = function(self, rs, rt)
-    local result = self.registers[rs]:mul(self.registers[rt])
-    self.HI = result
-    self.LO = result
+    local res = self.registers[rs] * self.registers[rt]
+    self.HI = mask32(res >> 32)
+    self.LO = mask32(res)
 end
-
--- MULTU rs, rt
 AM[0x19] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    self.HI = a:mul(b)
-    self.LO = a:mul(b)
+    local res = mask32(self.registers[rs]) * mask32(self.registers[rt])
+    self.HI = mask32(res >> 32)
+    self.LO = mask32(res)
 end
 
--- DIV rs, rt
+-- DIV / DIVU
 AM[0x1A] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
-    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
+    self.LO = math.floor(self.registers[rs] / self.registers[rt])
+    self.HI = self.registers[rs] % self.registers[rt]
+end
+AM[0x1B] = function(self, rs, rt)
+    local a, b = mask32(self.registers[rs]), mask32(self.registers[rt])
+    self.LO = math.floor(a / b)
+    self.HI = a % b
 end
 
--- DIVU rs, rt
-AM[0x1B] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
-    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
-end
+-- MFHI / MFLO / MTHI / MTLO
+AM[0x10] = function(self, _, _, rd) self.registers[rd] = self.HI end
+AM[0x12] = function(self, _, _, rd) self.registers[rd] = self.LO end
+AM[0x11] = function(self, rs) self.HI = self.registers[rs] end
+AM[0x13] = function(self, rs) self.LO = self.registers[rs] end
+
+-- =============================
+-- 64-bit instructions using Vorx64
+-- =============================
 
 -- DMULT rs, rt
 AM[0x1C] = function(self, rs, rt)
-    local result = self.registers[rs]:mul(self.registers[rt])
-    self.HI = result
-    self.LO = result
+    local a, b = Vorx64.new(0, self.registers[rs]), Vorx64.new(0, self.registers[rt])
+    local res = a:mul(b)
+    self.HI = res.hi
+    self.LO = res.lo
 end
 
 -- DMULTU rs, rt
 AM[0x1D] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    local result = a:mul(b)
-    self.HI = result
-    self.LO = result
+    local a, b = Vorx64.new(0, mask32(self.registers[rs])), Vorx64.new(0, mask32(self.registers[rt]))
+    local res = a:mul(b)
+    self.HI = res.hi
+    self.LO = res.lo
 end
 
 -- DDIV rs, rt
 AM[0x1E] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
-    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
+    local a, b = Vorx64.new(0, self.registers[rs]), Vorx64.new(0, self.registers[rt])
+    local q, r = a:divmod(b)
+    self.LO = q.lo
+    self.HI = r.lo
 end
 
 -- DDIVU rs, rt
 AM[0x1F] = function(self, rs, rt)
-    local a, b = self.registers[rs], self.registers[rt]
-    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
-    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
+    local a, b = Vorx64.new(0, mask32(self.registers[rs])), Vorx64.new(0, mask32(self.registers[rt]))
+    local q, r = a:divmod(b)
+    self.LO = q.lo
+    self.HI = r.lo
 end
 
--- ===== Move HI/LO =====
-
--- MFHI rd
-AM[0x10] = function(self, rd)
-    self.registers[rd] = self.HI
-end
-
--- MFLO rd
-AM[0x12] = function(self, rd)
-    self.registers[rd] = self.LO
-end
-
--- MTHI rs
-AM[0x11] = function(self, rs)
-    self.HI = self.registers[rs]
-end
-
--- MTLO rs
-AM[0x13] = function(self, rs)
-    self.LO = self.registers[rs]
-end
-
--- Attach AM
+-- Attach to CPU
 R4300i.arithmetic = AM
 
 -- =============================
