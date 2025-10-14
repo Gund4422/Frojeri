@@ -1,3 +1,4 @@
+![Frojeri Logo](https://github.com/Gund4422/Frojeri/raw/main/Assets/Frojeri.png)
 # The Frojeri Project
 
 Welcome to **The Frojeri Project**, a full Nintendo 64 R4300i CPU emulation written in Luau for Roblox.
