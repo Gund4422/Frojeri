@@ -1,51 +1,131 @@
--- The Frojeri Project (v7)
+-- ==========================
+-- Vorx64: 64-bit integer library (embedded)
+-- ==========================
+local Vorx64 = {}
+Vorx64.__index = Vorx64
+
+function Vorx64.new(hi, lo)
+    return setmetatable({hi = hi or 0, lo = lo or 0}, Vorx64)
+end
+
+function Vorx64:add(other)
+    local lo = (self.lo + other.lo) & 0xFFFFFFFF
+    local carry = ((self.lo + other.lo) >> 32) & 0xFFFFFFFF
+    local hi = (self.hi + other.hi + carry) & 0xFFFFFFFF
+    return Vorx64.new(hi, lo)
+end
+
+function Vorx64:sub(other)
+    local lo = self.lo - other.lo
+    local borrow = 0
+    if lo < 0 then lo = lo + 0x100000000; borrow = 1 end
+    local hi = (self.hi - other.hi - borrow) & 0xFFFFFFFF
+    return Vorx64.new(hi, lo)
+end
+
+function Vorx64:band(other) return Vorx64.new(self.hi & other.hi, self.lo & other.lo) end
+function Vorx64:bor(other) return Vorx64.new(self.hi | other.hi, self.lo | other.lo) end
+function Vorx64:bxor(other) return Vorx64.new(self.hi ~ other.hi, self.lo ~ other.lo) end
+
+function Vorx64:lshift(bits)
+    bits = bits % 64
+    if bits == 0 then return Vorx64.new(self.hi, self.lo) end
+    if bits < 32 then
+        local hi = ((self.hi << bits) | (self.lo >> (32 - bits))) & 0xFFFFFFFF
+        local lo = (self.lo << bits) & 0xFFFFFFFF
+        return Vorx64.new(hi, lo)
+    else
+        local hi = (self.lo << (bits - 32)) & 0xFFFFFFFF
+        local lo = 0
+        return Vorx64.new(hi, lo)
+    end
+end
+
+function Vorx64:rshift(bits)
+    bits = bits % 64
+    if bits == 0 then return Vorx64.new(self.hi, self.lo) end
+    if bits < 32 then
+        local lo = ((self.lo >> bits) | (self.hi << (32 - bits))) & 0xFFFFFFFF
+        local hi = (self.hi >> bits) & 0xFFFFFFFF
+        return Vorx64.new(hi, lo)
+    else
+        local lo = (self.hi >> (bits - 32)) & 0xFFFFFFFF
+        local hi = 0
+        return Vorx64.new(hi, lo)
+    end
+end
+
+function Vorx64:sar(bits)
+    bits = bits % 64
+    local sign = (self.hi & 0x80000000) ~= 0 and 0xFFFFFFFF or 0
+    if bits == 0 then return Vorx64.new(self.hi, self.lo) end
+    if bits < 32 then
+        local lo = ((self.lo >> bits) | (self.hi << (32 - bits))) & 0xFFFFFFFF
+        local hi = ((self.hi >> bits) | (sign << (32 - bits))) & 0xFFFFFFFF
+        return Vorx64.new(hi, lo)
+    else
+        local hi = sign
+        local lo = ((self.hi >> (bits - 32)) | (sign << (64 - bits))) & 0xFFFFFFFF
+        return Vorx64.new(hi, lo)
+    end
+end
+
+function Vorx64:cmp(other)
+    if self.hi > other.hi then return 1
+    elseif self.hi < other.hi then return -1
+    elseif self.lo > other.lo then return 1
+    elseif self.lo < other.lo then return -1
+    else return 0
+    end
+end
+
+function Vorx64:tonumber() return self.hi * 0x100000000 + self.lo end
+function Vorx64:tohex() return string.format("%08X%08X", self.hi, self.lo) end
+
+-- ==========================
+-- frojeri
+-- ==========================
+local R4300i = {}
+R4300i.__index = R4300i
+
 function R4300i.new()
     local self = setmetatable({}, R4300i)
 
-    -- General Purpose Registers (32)
+    -- 64-bit General Purpose Registers
     self.registers = {}
     for i = 0, 31 do
-        self.registers[i] = 0 -- optionally, could store Vorx64 for 64-bit GPRs later
+        self.registers[i] = Vorx64.new(0,0)
     end
 
-    -- Floating Point Registers (COP1, 32)
-    self.FPR = {}
-    for i = 0, 31 do
-        self.FPR[i] = 0 -- or Vorx64 if doing 64-bit float simulation
-    end
-
-    -- Control Registers
-    self.cop0 = {
-        EPC = 0,
-        Status = 0x18000000,
-        Cause = 0,
-        -- Add more as needed
-    }
-
-    self.memory = {}          -- Sparse memory table
-    self.loadstore = {}       -- Load/Store opcode handlers
-    self.arithmetic = {}      -- Arithmetic opcode handlers
-    self.jumpbranch = {}      -- Jump/Branch opcode handlers
-    self.special = {}         -- Special opcode handlers
-    self.exceptions = {}      -- Exception handlers
-    self.pseudo = {}          -- Pseudo instructions
-
-    -- Delay slot handling
-    self.branchTarget = nil   -- Target PC for branch/jump
-    self.inDelaySlot = false  -- Flag indicating next instruction is in delay slot
-
-    -- For LL/SC
-    self.linkedAddress = nil
-
-    -- HI/LO for multiplication/division
-    self.HI = 0
-    self.LO = 0
+    -- HI/LO 64-bit
+    self.HI = Vorx64.new(0,0)
+    self.LO = Vorx64.new(0,0)
 
     -- Program Counter
-    self.PC = 0xBFC00000 -- typical N64 boot address
+    self.PC = 0xBFC00000
+
+    -- Branch delay support
+    self.branchTarget = nil
+    self.inDelaySlot = false
+
+    -- COP0 minimal state
+    self.cop0 = {EPC=0, Status=0x18000000, Cause=0}
+
+    -- Memory and opcode tables
+    self.memory = {}
+    self.loadstore = {}
+    self.arithmetic = {}
+    self.jumpbranch = {}
+    self.special = {}
+    self.exceptions = {}
+    self.cop1 = {}
+    self.pseudo = {}
+    self.linkedAddress = nil
 
     return self
 end
+
+return R4300i
 
 -- =============================
 -- Helper Functions
@@ -271,176 +351,212 @@ LS[0x0F] = function(self)
     -- no-op in Roblox
 end
 
-
 -- =============================
--- Arithmetic Module (AM)
+-- Vorx64-aware Arithmetic Module (AM)
 -- =============================
 local AM = {}
 
+-- ===== Basic Arithmetic =====
 
--- ADD rd, rs, rt
-AM[0x20] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] + self.registers[rt]
+-- ADD rd, rs, rt (signed, with overflow ignored for now)
+AM[0x20] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:add(self.registers[rt])
 end
 
--- ADDU rd, rs, rt
-AM[0x21] = function(self, rs, rt, rd)
-    self.registers[rd] = mask32(self.registers[rs] + self.registers[rt])
+-- ADDU rd, rs, rt (unsigned)
+AM[0x21] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:add(self.registers[rt])
 end
 
 -- SUB rd, rs, rt
-AM[0x22] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] - self.registers[rt]
+AM[0x22] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:sub(self.registers[rt])
 end
 
 -- SUBU rd, rs, rt
-AM[0x23] = function(self, rs, rt, rd)
-    self.registers[rd] = mask32(self.registers[rs] - self.registers[rt])
+AM[0x23] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:sub(self.registers[rt])
 end
 
+-- ===== Immediate Arithmetic =====
+
 -- ADDI rt, rs, imm
-AM[0x08] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = self.registers[rs] + imm
+AM[0x08] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:add(Vorx64.new(0, imm))
 end
 
 -- ADDIU rt, rs, imm
-AM[0x09] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = mask32(self.registers[rs] + imm)
-end
-
--- SLT rd, rs, rt
-AM[0x2A] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] < self.registers[rt] and 1 or 0
-end
-
--- SLTU rd, rs, rt
-AM[0x2B] = function(self, rs, rt, rd)
-    local a = mask32(self.registers[rs])
-    local b = mask32(self.registers[rt])
-    self.registers[rd] = a < b and 1 or 0
+AM[0x09] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:add(Vorx64.new(0, imm))
 end
 
 -- SLTI rt, rs, imm
-AM[0x0A] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = self.registers[rs] < imm and 1 or 0
+AM[0x0A] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:cmp(Vorx64.new(0, imm)) < 0 and 1 or 0
 end
 
 -- SLTIU rt, rs, imm
-AM[0x0B] = function(self, rs, rt, _, _, imm)
-    local a = mask32(self.registers[rs])
-    local b = mask32(imm)
-    self.registers[rt] = a < b and 1 or 0
-end
-
--- AND rd, rs, rt
-AM[0x24] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] & self.registers[rt]
-end
-
--- OR rd, rs, rt
-AM[0x25] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] | self.registers[rt]
-end
-
--- XOR rd, rs, rt
-AM[0x26] = function(self, rs, rt, rd)
-    self.registers[rd] = self.registers[rs] ~ self.registers[rt]
-end
-
--- NOR rd, rs, rt
-AM[0x27] = function(self, rs, rt, rd)
-    self.registers[rd] = ~(self.registers[rs] | self.registers[rt])
+AM[0x0B] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:cmp(Vorx64.new(0, imm)) < 0 and 1 or 0
 end
 
 -- ANDI rt, rs, imm
-AM[0x0C] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = self.registers[rs] & imm
+AM[0x0C] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:band(Vorx64.new(0, imm))
 end
 
 -- ORI rt, rs, imm
-AM[0x0D] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = self.registers[rs] | imm
+AM[0x0D] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:bor(Vorx64.new(0, imm))
 end
 
 -- XORI rt, rs, imm
-AM[0x0E] = function(self, rs, rt, _, _, imm)
-    self.registers[rt] = self.registers[rs] ~ imm
+AM[0x0E] = function(self, rt, rs, _, _, imm)
+    self.registers[rt] = self.registers[rs]:bxor(Vorx64.new(0, imm))
 end
 
 -- LUI rt, imm
-AM[0x0F] = function(self, _, rt, _, _, imm)
-    self.registers[rt] = (imm << 16) & 0xFFFFFFFF
+AM[0x0F] = function(self, rt, _, _, _, imm)
+    self.registers[rt] = Vorx64.new(0, imm << 16)
 end
 
+-- ===== Logic and Comparison =====
+
+-- AND rd, rs, rt
+AM[0x24] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:band(self.registers[rt])
+end
+
+-- OR rd, rs, rt
+AM[0x25] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:bor(self.registers[rt])
+end
+
+-- XOR rd, rs, rt
+AM[0x26] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:bxor(self.registers[rt])
+end
+
+-- NOR rd, rs, rt
+AM[0x27] = function(self, rd, rs, rt)
+    local ones = Vorx64.new(0xFFFFFFFF, 0xFFFFFFFF)
+    self.registers[rd] = self.registers[rs]:bor(self.registers[rt]):bxor(ones)
+end
+
+-- SLT rd, rs, rt
+AM[0x2A] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:cmp(self.registers[rt]) < 0 and 1 or 0
+end
+
+-- SLTU rd, rs, rt
+AM[0x2B] = function(self, rd, rs, rt)
+    self.registers[rd] = self.registers[rs]:cmp(self.registers[rt]) < 0 and 1 or 0
+end
+
+-- ===== Shift Instructions =====
+
 -- SLL rd, rt, sa
-AM[0x00] = function(self, _, rt, rd, sa)
-    self.registers[rd] = mask32(self.registers[rt] << sa)
+AM[0x00] = function(self, rd, _, rt, sa)
+    self.registers[rd] = self.registers[rt]:lshift(sa)
 end
 
 -- SRL rd, rt, sa
-AM[0x02] = function(self, _, rt, rd, sa)
-    self.registers[rd] = mask32(self.registers[rt] >> sa)
+AM[0x02] = function(self, rd, _, rt, sa)
+    self.registers[rd] = self.registers[rt]:rshift(sa)
 end
 
 -- SRA rd, rt, sa
-AM[0x03] = function(self, _, rt, rd, sa)
-    self.registers[rd] = self.registers[rt] >> sa -- arithmetic shift
+AM[0x03] = function(self, rd, _, rt, sa)
+    self.registers[rd] = self.registers[rt]:sar(sa)
 end
 
 -- SLLV rd, rt, rs
-AM[0x04] = function(self, rs, rt, rd)
-    local sa = self.registers[rs] & 0x1F
-    self.registers[rd] = mask32(self.registers[rt] << sa)
+AM[0x04] = function(self, rd, rs, rt)
+    local sa = self.registers[rs]:tonumber() & 0x1F
+    self.registers[rd] = self.registers[rt]:lshift(sa)
 end
 
 -- SRLV rd, rt, rs
-AM[0x06] = function(self, rs, rt, rd)
-    local sa = self.registers[rs] & 0x1F
-    self.registers[rd] = mask32(self.registers[rt] >> sa)
+AM[0x06] = function(self, rd, rs, rt)
+    local sa = self.registers[rs]:tonumber() & 0x1F
+    self.registers[rd] = self.registers[rt]:rshift(sa)
 end
 
 -- SRAV rd, rt, rs
-AM[0x07] = function(self, rs, rt, rd)
-    local sa = self.registers[rs] & 0x1F
-    self.registers[rd] = self.registers[rt] >> sa
+AM[0x07] = function(self, rd, rs, rt)
+    local sa = self.registers[rs]:tonumber() & 0x1F
+    self.registers[rd] = self.registers[rt]:sar(sa)
 end
+
+-- ===== Multiply / Divide =====
 
 -- MULT rs, rt
 AM[0x18] = function(self, rs, rt)
-    local result = self.registers[rs] * self.registers[rt]
-    self.HI = (result >> 32) & 0xFFFFFFFF
-    self.LO = result & 0xFFFFFFFF
+    local result = self.registers[rs]:mul(self.registers[rt])
+    self.HI = result
+    self.LO = result
 end
 
 -- MULTU rs, rt
 AM[0x19] = function(self, rs, rt)
-    local result = mask32(self.registers[rs]) * mask32(self.registers[rt])
-    self.HI = (result >> 32) & 0xFFFFFFFF
-    self.LO = result & 0xFFFFFFFF
+    local a, b = self.registers[rs], self.registers[rt]
+    self.HI = a:mul(b)
+    self.LO = a:mul(b)
 end
 
 -- DIV rs, rt
 AM[0x1A] = function(self, rs, rt)
-    self.LO = math.floor(self.registers[rs] / self.registers[rt])
-    self.HI = self.registers[rs] % self.registers[rt]
+    local a, b = self.registers[rs], self.registers[rt]
+    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
+    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
 end
 
 -- DIVU rs, rt
 AM[0x1B] = function(self, rs, rt)
-    local a = mask32(self.registers[rs])
-    local b = mask32(self.registers[rt])
-    self.LO = math.floor(a / b)
-    self.HI = a % b
+    local a, b = self.registers[rs], self.registers[rt]
+    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
+    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
 end
 
+-- DMULT rs, rt
+AM[0x1C] = function(self, rs, rt)
+    local result = self.registers[rs]:mul(self.registers[rt])
+    self.HI = result
+    self.LO = result
+end
+
+-- DMULTU rs, rt
+AM[0x1D] = function(self, rs, rt)
+    local a, b = self.registers[rs], self.registers[rt]
+    local result = a:mul(b)
+    self.HI = result
+    self.LO = result
+end
+
+-- DDIV rs, rt
+AM[0x1E] = function(self, rs, rt)
+    local a, b = self.registers[rs], self.registers[rt]
+    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
+    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
+end
+
+-- DDIVU rs, rt
+AM[0x1F] = function(self, rs, rt)
+    local a, b = self.registers[rs], self.registers[rt]
+    self.LO = Vorx64.new(0, math.floor(a:tonumber() / b:tonumber()))
+    self.HI = Vorx64.new(0, a:tonumber() % b:tonumber())
+end
+
+-- ===== Move HI/LO =====
+
 -- MFHI rd
-AM[0x10] = function(self, _, _, rd)
-    self.registers[rd] = self.HI or 0
+AM[0x10] = function(self, rd)
+    self.registers[rd] = self.HI
 end
 
 -- MFLO rd
-AM[0x12] = function(self, _, _, rd)
-    self.registers[rd] = self.LO or 0
+AM[0x12] = function(self, rd)
+    self.registers[rd] = self.LO
 end
 
 -- MTHI rs
@@ -453,203 +569,109 @@ AM[0x13] = function(self, rs)
     self.LO = self.registers[rs]
 end
 
--- DMULT rs, rt
-AM[0x1C] = function(self, rs, rt)
-    local result = self.registers[rs] * self.registers[rt]
-    self.HI = (result >> 32) & 0xFFFFFFFFFFFFFFFF
-    self.LO = result & 0xFFFFFFFFFFFFFFFF
-end
-
--- DMULTU rs, rt
-AM[0x1D] = function(self, rs, rt)
-    local a = mask32(self.registers[rs])
-    local b = mask32(self.registers[rt])
-    local result = a * b
-    self.HI = (result >> 32) & 0xFFFFFFFFFFFFFFFF
-    self.LO = result & 0xFFFFFFFFFFFFFFFF
-end
-
--- DDIV rs, rt
-AM[0x1E] = function(self, rs, rt)
-    self.LO = math.floor(self.registers[rs] / self.registers[rt])
-    self.HI = self.registers[rs] % self.registers[rt]
-end
-
--- DDIVU rs, rt
-AM[0x1F] = function(self, rs, rt)
-    local a = mask32(self.registers[rs])
-    local b = mask32(self.registers[rt])
-    self.LO = math.floor(a / b)
-    self.HI = a % b
-end
-
--- =============================
--- Attach AM to CPU
--- =============================
+-- Attach AM
 R4300i.arithmetic = AM
 
 -- =============================
--- Jump/Branch opcodes
+-- Jump/Branch Module (JB) with delay-slot
 -- =============================
 local JB = {}
 
--- BEQ rs, rt, offset
-JB[0x04] = function(self, rs, rt, _, _, offset)
-    if self.registers[rs] == self.registers[rt] then
-        self.PC = self.PC + (offset << 2)
+-- Helper: execute branch with delay slot
+local function branch(self, target)
+    self.branchTarget = target      -- set target for after delay slot
+    self.inDelaySlot = true         -- flag delay slot
+end
+
+local zero = Vorx64.new(0, 0)
+
+-- Standard branches
+JB[0x04] = function(self, rs, rt, _, _, offset) -- BEQ
+    if self.registers[rs]:cmp(self.registers[rt]) == 0 then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
     end
 end
 
--- BNE rs, rt, offset
-JB[0x05] = function(self, rs, rt, _, _, offset)
-    if self.registers[rs] ~= self.registers[rt] then
-        self.PC = self.PC + (offset << 2)
+JB[0x05] = function(self, rs, rt, _, _, offset) -- BNE
+    if self.registers[rs]:cmp(self.registers[rt]) ~= 0 then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
     end
 end
 
--- BLEZ rs, offset
-JB[0x06] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] <= 0 then
-        self.PC = self.PC + (offset << 2)
+JB[0x06] = function(self, rs, _, _, _, offset) -- BLEZ
+    if self.registers[rs]:cmp(zero) <= 0 then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
     end
 end
 
--- BGTZ rs, offset
-JB[0x07] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] > 0 then
-        self.PC = self.PC + (offset << 2)
+JB[0x07] = function(self, rs, _, _, _, offset) -- BGTZ
+    if self.registers[rs]:cmp(zero) > 0 then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
     end
 end
 
--- BLTZ rs, offset
-JB[0x01] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] < 0 then
-        self.PC = self.PC + (offset << 2)
+-- BLTZ / BGEZ / BLTZAL / BGEZAL
+JB[0x01] = function(self, rs, _, _, _, offset, linkType)
+    -- Determine variant by linkType (0 = BLTZ, 1 = BGEZ, 2 = BLTZAL, 3 = BGEZAL)
+    linkType = linkType or 0
+    local takeBranch = false
+    if linkType == 0 or linkType == 2 then
+        takeBranch = self.registers[rs]:cmp(zero) < 0
+    else
+        takeBranch = self.registers[rs]:cmp(zero) >= 0
+    end
+    if linkType == 2 or linkType == 3 then
+        self.registers[31] = self.PC:add(Vorx64.new(0, 8))
+    end
+    if takeBranch then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
     end
 end
 
--- BGEZ rs, offset
-JB[0x01] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] >= 0 then
-        self.PC = self.PC + (offset << 2)
+-- Branch likely variants (execute next instruction only if branch taken)
+local function branchLikely(self, rs, rt, offset, taken)
+    if taken then
+        branch(self, self.PC:add(Vorx64.new(0, offset << 2)))
+    else
+        -- skip delay slot
+        self.PC = self.PC:add(Vorx64.new(0, 4))
     end
 end
 
--- J target
+-- BLTZL / BGEZL
+JB[0x10] = function(self, rs, _, _, _, offset, link)
+    local taken = self.registers[rs]:cmp(zero) < 0
+    if link then self.registers[31] = self.PC:add(Vorx64.new(0, 8)) end
+    branchLikely(self, rs, nil, offset, taken)
+end
+
+JB[0x11] = function(self, rs, _, _, _, offset, link)
+    local taken = self.registers[rs]:cmp(zero) >= 0
+    if link then self.registers[31] = self.PC:add(Vorx64.new(0, 8)) end
+    branchLikely(self, rs, nil, offset, taken)
+end
+
+-- J / JAL
 JB[0x02] = function(self, _, _, _, _, target)
-    self.PC = (self.PC & 0xF0000000) | (target << 2)
+    local newPC = Vorx64.new(0, bit32.band(self.PC:tonumber(), 0xF0000000) + (target << 2))
+    branch(self, newPC)
 end
 
--- JAL target
 JB[0x03] = function(self, _, _, _, _, target)
-    self.registers[31] = self.PC + 8
-    self.PC = (self.PC & 0xF0000000) | (target << 2)
+    self.registers[31] = self.PC:add(Vorx64.new(0, 8))
+    local newPC = Vorx64.new(0, bit32.band(self.PC:tonumber(), 0xF0000000) + (target << 2))
+    branch(self, newPC)
 end
 
--- JR rs
+-- JR / JALR
 JB[0x08] = function(self, rs)
-    self.PC = self.registers[rs]
+    branch(self, self.registers[rs])
 end
 
--- JALR rs, rd
 JB[0x09] = function(self, rs, _, rd)
     rd = rd or 31
-    self.registers[rd] = self.PC + 8
-    self.PC = self.registers[rs]
-end
-
--- BEQL (likely) rs, rt, offset
-JB[0x14] = function(self, rs, rt, _, _, offset)
-    if self.registers[rs] == self.registers[rt] then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4 -- skip delay slot
-    end
-end
-
--- BNEL (likely) rs, rt, offset
-JB[0x15] = function(self, rs, rt, _, _, offset)
-    if self.registers[rs] ~= self.registers[rt] then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BLEZL rs, offset
-JB[0x16] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] <= 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BGTZL rs, offset
-JB[0x17] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] > 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BLTZL rs, offset
-JB[0x10] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] < 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BGEZL rs, offset
-JB[0x11] = function(self, rs, _, _, _, offset)
-    if self.registers[rs] >= 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BGEZAL rs, offset
-JB[0x11] = function(self, rs, _, _, _, offset)
-    self.registers[31] = self.PC + 8
-    if self.registers[rs] >= 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BGEZALL rs, offset
-JB[0x11] = function(self, rs, _, _, _, offset)
-    self.registers[31] = self.PC + 8
-    if self.registers[rs] >= 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BLTZAL rs, offset
-JB[0x10] = function(self, rs, _, _, _, offset)
-    self.registers[31] = self.PC + 8
-    if self.registers[rs] < 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
-end
-
--- BLTZALL rs, offset
-JB[0x10] = function(self, rs, _, _, _, offset)
-    self.registers[31] = self.PC + 8
-    if self.registers[rs] < 0 then
-        self.PC = self.PC + (offset << 2)
-    else
-        self.PC = self.PC + 4
-    end
+    self.registers[rd] = self.PC:add(Vorx64.new(0, 8))
+    branch(self, self.registers[rs])
 end
 
 -- Attach to CPU
@@ -1071,7 +1093,7 @@ R4300i.pseudo = PSEUDO
 -- Execute Opcodes (FINAL)
 -- ============================
 function R4300i:execute(opcode, rs, rt, rd, sa, imm_or_target)
-    -- Try each handler table in order
+    -- Fetch handler from tables
     local handler = self.loadstore[opcode]
                 or self.arithmetic[opcode]
                 or self.jumpbranch[opcode]
@@ -1079,13 +1101,26 @@ function R4300i:execute(opcode, rs, rt, rd, sa, imm_or_target)
                 or self.exceptions[opcode]
                 or self.cop0[opcode]
                 or self.pseudo[opcode]
-                -- For FPU, we need to pass instruction name instead of numeric opcode
-                -- Assume imm_or_target can be string for FPU instructions
                 or (type(imm_or_target) == "string" and self.cop1[imm_or_target])
 
-    if handler then
-        handler(self, rs, rt, rd, sa, imm_or_target)
-    else
+    if not handler then
         error(string.format("Opcode 0x%X not implemented!", opcode))
+    end
+
+    -- Save current PC (Vorx64) for normal increment
+    local nextPC = self.PC:add(Vorx64.new(0, 4))
+
+    -- Execute instruction
+    handler(self, rs, rt, rd, sa, imm_or_target)
+
+    -- Handle branch delay slot
+    if self.inDelaySlot then
+        -- Delay slot executed, commit branch target
+        self.PC = self.branchTarget
+        self.inDelaySlot = false
+        self.branchTarget = nil
+    else
+        -- Normal PC increment
+        self.PC = nextPC
     end
 end
