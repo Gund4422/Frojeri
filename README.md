@@ -1,6 +1,6 @@
-# The Frojeri Project v7
+# The Frojeri Project
 
-Welcome to **The Frojeri Project v7**, a full Nintendo 64 R4300i CPU emulation written in Luau for Roblox.
+Welcome to **The Frojeri Project**, a full Nintendo 64 R4300i CPU emulation written in Luau for Roblox.
 
 ---
 
@@ -108,9 +108,10 @@ print(cpu.registers[1]) -- 123
 ## Notes
 
 * Total size: ~27 KB
-* Total lines: 1,064
+* Total lines: 1,000~
 * Fully self-contained
 * Intended for educational and experimental use in Roblox
+* Current Version: v7.4
 
 ---
 
