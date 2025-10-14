@@ -1,21 +1,49 @@
 -- The Frojeri Project (v7)
-local R4300i = {}
-R4300i.__index = R4300i
-
 function R4300i.new()
     local self = setmetatable({}, R4300i)
-    self.registers = {} -- 32 general purpose registers
-    for i = 0, 31 do self.registers[i] = 0 end
-    self.memory = {} -- sparse table for memory
-    self.loadstore = {} -- load/store opcode handlers
-    self.arithmetic = {} -- arithmetic
-	self.jumpbranch = {} -- jumpbranch ig
-	self.special = {}
-	self.exceptions = {}
-	self.cop0 = {}
-	self.cop1 = {}
-	self.pseudo = {}
-	self.linkedAddress = nil -- for LL/SC
+
+    -- General Purpose Registers (32)
+    self.registers = {}
+    for i = 0, 31 do
+        self.registers[i] = 0 -- optionally, could store Vorx64 for 64-bit GPRs later
+    end
+
+    -- Floating Point Registers (COP1, 32)
+    self.FPR = {}
+    for i = 0, 31 do
+        self.FPR[i] = 0 -- or Vorx64 if doing 64-bit float simulation
+    end
+
+    -- Control Registers
+    self.cop0 = {
+        EPC = 0,
+        Status = 0x18000000,
+        Cause = 0,
+        -- Add more as needed
+    }
+
+    self.memory = {}          -- Sparse memory table
+    self.loadstore = {}       -- Load/Store opcode handlers
+    self.arithmetic = {}      -- Arithmetic opcode handlers
+    self.jumpbranch = {}      -- Jump/Branch opcode handlers
+    self.special = {}         -- Special opcode handlers
+    self.exceptions = {}      -- Exception handlers
+    self.pseudo = {}          -- Pseudo instructions
+
+    -- Delay slot handling
+    self.branchTarget = nil   -- Target PC for branch/jump
+    self.inDelaySlot = false  -- Flag indicating next instruction is in delay slot
+
+    -- For LL/SC
+    self.linkedAddress = nil
+
+    -- HI/LO for multiplication/division
+    self.HI = 0
+    self.LO = 0
+
+    -- Program Counter
+    self.PC = 0xBFC00000 -- typical N64 boot address
+
     return self
 end
 
