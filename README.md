@@ -112,7 +112,7 @@ print(cpu.registers[1]) -- 123
 * Total lines: 1,000~
 * Fully self-contained
 * Intended for educational and experimental use in Roblox
-* Current Version: v7.4
+* Current Version: v7.5
 
 ---
 
