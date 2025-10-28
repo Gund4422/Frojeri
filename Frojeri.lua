@@ -714,48 +714,101 @@ R4300i.exceptions = EXCEPT
 -- =============================
 -- COP0
 -- =============================
+-- ===============================
+-- Initialize CP0 registers
+-- ===============================
+R4300i.CP0_Registers = {
+    Index      = 0,
+    Random     = 31,
+    EntryLo0   = 0,
+    EntryLo1   = 0,
+    Context    = 0,
+    PageMask   = 0,
+    Wired      = 0,
+    BadVAddr   = 0,
+    Count      = 0,
+    EntryHi    = 0,
+    Compare    = 0,
+    Status     = 0x18000000, -- Boot default
+    Cause      = 0,
+    EPC        = 0,
+    PRId       = 0x00000000,
+    Config     = 0,
+    LLAddr     = 0,
+    WatchLo    = 0,
+    WatchHi    = 0,
+    XContext   = 0,
+    Debug     = 0,
+    DEPC       = 0,
+    PerfCnt    = 0,
+    ErrEPC     = 0
+}
+
+-- ===============================
+-- COP0 Opcode Handlers
+-- ===============================
 local COP0 = {}
 
--- MFC0 rt, fs  (Move from COP0)
-COP0[0x00] = function(self, fs, rt)
-    self.registers[rt] = self.CP0[fs] or 0
+-- MFC0 rt, rd  (Move from CP0)
+COP0[0x00] = function(self, rt, rd)
+    self.registers[rt] = self.CP0_Registers[rd] or 0
 end
 
--- MTC0 rt, fs  (Move to COP0)
-COP0[0x04] = function(self, fs, rt)
-    self.CP0[fs] = self.registers[rt]
+-- MTC0 rt, rd  (Move to CP0)
+COP0[0x04] = function(self, rt, rd)
+    local val = self.registers[rt] or 0
+    self.CP0_Registers[rd] = val
+    -- Update Status-related side effects
+    if rd == "Compare" then
+        self.CP0_Registers.Cause = self.CP0_Registers.Cause & 0xFFFFFF7F
+    end
 end
 
--- TLBP  (Probe TLB for matching entry)
+-- TLBP (Probe)
 COP0[0x08] = function(self)
-    -- For simplicity, just simulate a TLB probe
-    -- Normally sets index register on match/failure
-    self.CP0.Index = 0
+    -- Simplified: always clear Index
+    self.CP0_Registers.Index = 0
 end
 
--- TLBR  (Read indexed TLB entry)
+-- TLBR (Read TLB Entry)
 COP0[0x10] = function(self)
-    -- Simulate reading TLB entry into CP0 registers
-    -- Placeholder: no actual TLB implemented
+    -- Simplified: read indexed TLB into CP0
+    -- Example: self.CP0_Registers.EntryHi = TLB[Index].VPN2
 end
 
--- TLBWI (Write indexed TLB entry)
+-- TLBWI (Write Indexed)
 COP0[0x18] = function(self)
-    -- Simulate writing CP0 registers to TLB at index
+    -- Simplified: write CP0 to TLB[Index]
 end
 
--- TLBWR (Write random TLB entry)
+-- TLBWR (Write Random)
 COP0[0x1A] = function(self)
-    -- Simulate writing CP0 registers to random TLB
+    -- Simplified: write CP0 to TLB[Random]
 end
 
--- ERET (Return from exception)
-COP0[0x18] = function(self)
-    self.PC = self.CP0.EPC or self.PC
+-- ERET
+COP0[0x1E] = function(self)
+    self.PC = self.CP0_Registers.EPC or self.PC
+    -- Restore Status bits (simplified)
+    self.CP0_Registers.Status = self.CP0_Registers.Status | 0x2 -- Clear EXL
 end
 
--- Attach to CPU
-R4300i.cop0 = COP0
+-- Wait (NOP for now)
+COP0[0x20] = function(self)
+end
+
+-- ===============================
+-- Timer & Count Increment
+-- ===============================
+function R4300i:incrementCount()
+    self.CP0_Registers.Count = (self.CP0_Registers.Count + 1) & 0xFFFFFFFF
+    if self.CP0_Registers.Count == self.CP0_Registers.Compare then
+        self.CP0_Registers.Cause = self.CP0_Registers.Cause | 0x8000 -- Timer interrupt
+    end
+end
+
+-- Attach COP0 to CPU
+R4300i.COP0 = COP0
 
 -- =============================
 -- FPU aka COP1
